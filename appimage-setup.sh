@@ -69,15 +69,18 @@ create_desktop_entry() {
     local appimage_path=$1
     local appimage_name
     appimage_name=$(basename "$appimage_path")
-    local basename_no_ext="${appimage_name%.*}"      # strip .AppImage
-    local desktop_name="${PREFIX}-${basename_no_ext}.desktop"
+    # Full base name without extension
+    local full_base="${appimage_name%.*}"
+    # Short base name (up to first dash) for desktop entry naming
+    local short_base="${full_base%%-*}"
+    local desktop_name="${PREFIX}-${short_base}.desktop"
     local desktop_path="${DESKTOPDIR}/${desktop_name}"
 
-    # Optional: try to find an icon next to the AppImage (same basename, .png/.svg)
+    # Optional: try to find an icon next to the AppImage (same full base name, .png/.svg)
     local icon_path=""
     for ext in png svg jpg jpeg; do
-        if [[ -f "${APPDIR}/${basename_no_ext}.${ext}" ]]; then
-            icon_path="${APPDIR}/${basename_no_ext}.${ext}"
+        if [[ -f "${APPDIR}/${full_base}.${ext}" ]]; then
+            icon_path="${APPDIR}/${full_base}.${ext}"
             break
         fi
     done
@@ -85,15 +88,15 @@ create_desktop_entry() {
     # If we found an icon, copy it to the icon directory (so the launcher can find it)
     if [[ -n "$icon_path" ]]; then
         mkdir -p "${ICONDIR}"
-        cp -f "$icon_path" "${ICONDIR}/${basename_no_ext}.${icon_path##*.}"
-        icon_uri="Icon=${basename_no_ext}"
+        cp -f "$icon_path" "${ICONDIR}/${full_base}.${icon_path##*.}"
+        icon_uri="Icon=${full_base}"
     else
         icon_uri="# Icon= (no icon found)"
     fi
 
     cat >"$desktop_path" <<EOF
 [Desktop Entry]
-Name=${basename_no_ext}
+Name=${short_base}
 Exec="${appimage_path}" %U
 ${icon_uri}
 Terminal=false
@@ -113,10 +116,10 @@ list_status() {
     echo "Scanning ${DESKTOPDIR} for ${PREFIX}-*.desktop …"
     mapfile -t desktop_files < <(find "$DESKTOPDIR" -maxdepth 1 -type f -name "${PREFIX}-*.desktop" -printf "%f\n" | sort)
 
-    # Build associative arrays for quick lookup
+    # Build associative arrays for quick lookup (short base names)
     declare -A has_desktop
     for d in "${desktop_files[@]}"; do
-        # strip prefix and extension to get the corresponding AppImage base name
+        # strip prefix and extension to get the short base name used for the desktop file
         base="${d#${PREFIX}-}"
         base="${base%.desktop}"
         has_desktop["$base"]=1
@@ -124,8 +127,9 @@ list_status() {
 
     echo "=== AppImages with a matching .desktop entry ==="
     for a in "${appimages[@]}"; do
-        name="${a%.*}"
-        if [[ ${has_desktop[$name]+_} ]]; then
+        full_base="${a%.*}"
+        short_base="${full_base%%-*}"
+        if [[ ${has_desktop[$short_base]+_} ]]; then
             echo "  ✔ $a"
         fi
     done
@@ -133,8 +137,9 @@ list_status() {
     echo
     echo "=== AppImages missing a .desktop entry ==="
     for a in "${appimages[@]}"; do
-        name="${a%.*}"
-        if [[ ! ${has_desktop[$name]+_} ]]; then
+        full_base="${a%.*}"
+        short_base="${full_base%%-*}"
+        if [[ ! ${has_desktop[$short_base]+_} ]]; then
             echo "  ✘ $a"
         fi
     done
@@ -193,12 +198,28 @@ if [[ -n "$REMOVE_NAME" ]]; then
 fi
 
 # 4. Process supplied AppImages (or all in $APPDIR if none given)
-if [[ ${#APPARGS[@]:-0} -eq 0 ]]; then
+if [[ ${#APPARGS[@]} -eq 0 ]]; then
     # No explicit arguments – act on every *.AppImage in $APPDIR
     mapfile -t targets < <(find "$APPDIR" -maxdepth 1 -type f -iname "*.AppImage")
 else
-    # Expand possible globs (e.g. ~/apps/*.AppImage)
-    mapfile -t targets < <(printf "%s\n" "${APPARGS[@]}")
+    # Resolve each argument: if it looks like a path or glob, keep it; otherwise treat as basename and find matching AppImage(s)
+    resolved=()
+    for arg in "${APPARGS[@]}"; do
+        if [[ "$arg" == */* ]] || [[ "$arg" == *.AppImage ]]; then
+            # Assume it's a path or glob; expand via printf (keeps as is)
+            resolved+=("$arg")
+        else
+            # Treat as basename: find files starting with this name
+            mapfile -t matches < <(find "$APPDIR" -maxdepth 1 -type f -iname "${arg}*AppImage")
+            if [[ ${#matches[@]} -gt 0 ]]; then
+                resolved+=("${matches[@]}")
+            else
+                echo "⚠ No AppImage found for basename '$arg'"
+            fi
+        fi
+    done
+    # Expand possible globs now (e.g. ~/apps/*.AppImage) and collect into targets
+    mapfile -t targets < <(printf "%s\n" "${resolved[@]}")
 fi
 
 if [[ ${#targets[@]} -eq 0 ]]; then
