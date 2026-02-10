@@ -14,12 +14,13 @@
 #   ./appimage-setup.sh [options] [AppImage …]
 #
 # Options:
+#   -s, --show-desktop NAME   Show the .desktop file for the given short name
 #   -i, --install-libfuse2      Install libfuse2 if it isn’t already.
 #   -c, --create-desktop        Create/update .desktop files for the
 #                               supplied AppImages (default if AppImages are given).
 #   -l, --list                  List AppImages in ~/apps and show which have
 #                               a .desktop file and which don’t.
-#   -r, --remove-desktop FILE   Remove a specific .desktop entry (by name, not path).
+#           -s, --show-desktop NAME   Show the .desktop file for the given short name
 #   -h, --help                  Show this help message and exit.
 #
 # Example:
@@ -72,7 +73,10 @@ create_desktop_entry() {
     # Full base name without extension
     local full_base="${appimage_name%.*}"
     # Short base name (up to first dash) for desktop entry naming
-    local short_base="${full_base%%-*}"
+-    local short_base="${full_base%%-*}"
++    # Short base name: part before first dash or underscore
++    local short_base="${full_base%%[-_]*}"
+
     local desktop_name="${PREFIX}-${short_base}.desktop"
     local desktop_path="${DESKTOPDIR}/${desktop_name}"
 
@@ -156,6 +160,21 @@ remove_desktop_entry() {
     fi
 }
 
+show_desktop_entry() {
+    local name=$1
+    # Look for a desktop file starting with the given short name
+    local pattern="${DESKTOPDIR}/${PREFIX}-${name}*.desktop"
+    shopt -s nullglob
+    local matches=( $pattern )
+    shopt -u nullglob
+    if (( ${#matches[@]} )); then
+        cat "${matches[0]}"
+    else
+        echo "⚠ No desktop file found for name '$name'"
+        return 1
+    fi
+}
+
 # ---------------------------------------------------------------
 
 # Parse args
@@ -167,18 +186,26 @@ CREATE_DESKTOP=false
 INSTALL_LIBFUSE2=false
 LIST_ONLY=false
 REMOVE_NAME=""
+SHOW_NAME=""
+SHOW_DESKTOP=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -i|--install-libfuse2) INSTALL_LIBFUSE2=true; shift ;;
         -c|--create-desktop)   CREATE_DESKTOP=true; shift ;;
         -l|--list)              LIST_ONLY=true; shift ;;
-        -r|--remove-desktop)    REMOVE_NAME="$2"; shift 2 ;;
+        -s|--show-desktop)    SHOW_DESKTOP=true; SHOW_NAME="$2"; shift 2 ;;
         -h|--help)              usage ;;
         --) shift; break ;;
         *)                      APPARGS+=("$1"); shift ;;
     esac
 done
+
+# 1. Show desktop entry if requested
+if $SHOW_DESKTOP; then
+    show_desktop_entry "$SHOW_NAME"
+    exit 0
+fi
 
 # 1. Install libfuse2 if requested
 if $INSTALL_LIBFUSE2; then
