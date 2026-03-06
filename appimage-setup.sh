@@ -8,14 +8,13 @@
 #
 # Requirements:
 #   • Ubuntu 24.04 (or any Debian-based distro)
-#   • sudo privileges for the libfuse2 installation
+#   • libfuse2 must be installed manually before using this script
 #
 # Usage:
 #   ./appimage-setup.sh [options] [AppImage …]
 #
 # Options:
 #   -s, --show-desktop NAME   Show the .desktop file for the given short name
-#   -i, --install-libfuse2      Install libfuse2 if it isn’t already.
 #   -c, --create-desktop        Create/update .desktop files for the
 #                               supplied AppImages (default if AppImages are given).
 #   -l, --list                  List AppImages in ~/apps and show which have
@@ -45,14 +44,33 @@ usage() {
     exit 0
 }
 
-install_libfuse2() {
-    if dpkg -s libfuse2 >/dev/null 2>&1; then
-        echo "libfuse2 already installed."
+check_libfuse() {
+    local distro=""
+    if [[ -f /etc/fedora-release ]]; then
+        distro="fedora"
+    elif [[ -f /etc/debian_version ]]; then
+        distro="debian"
     else
-        echo "Installing libfuse2..."
-        sudo apt-get update -qq
-        sudo apt-get install -y libfuse2
-        echo "libfuse2 installed."
+        echo "⚠ Unsupported distribution."
+        return 1
+    fi
+
+    if [[ "$distro" == "fedora" ]]; then
+        if rpm -q fuse-libs >/dev/null 2>&1; then
+            echo "fuse-libs installed."
+        else
+            echo "✘ Error: fuse-libs (libfuse2) is not installed."
+            echo "   Please install it manually: sudo dnf install fuse-libs"
+            exit 1
+        fi
+    else
+        if dpkg -s libfuse2 >/dev/null 2>&1; then
+            echo "libfuse2 installed."
+        else
+            echo "✘ Error: libfuse2 is not installed."
+            echo "   Please install it manually: sudo apt-get install libfuse2"
+            exit 1
+        fi
     fi
 }
 
@@ -72,10 +90,8 @@ create_desktop_entry() {
     appimage_name=$(basename "$appimage_path")
     # Full base name without extension
     local full_base="${appimage_name%.*}"
-    # Short base name (up to first dash) for desktop entry naming
--    local short_base="${full_base%%-*}"
-+    # Short base name: part before first dash or underscore
-+    local short_base="${full_base%%[-_]*}"
+    # Short base name: part before first dash or underscore
+    local short_base="${full_base%%[-_]*}"
 
     local desktop_name="${PREFIX}-${short_base}.desktop"
     local desktop_path="${DESKTOPDIR}/${desktop_name}"
@@ -114,10 +130,14 @@ EOF
 }
 
 list_status() {
+    # Ensure APPDIR exists
+    mkdir -p "$APPDIR"
+
     echo "Scanning ${APPDIR} for *.AppImage …"
     mapfile -t appimages < <(find "$APPDIR" -maxdepth 1 -type f -iname "*.AppImage" -printf "%f\n" | sort)
 
     echo "Scanning ${DESKTOPDIR} for ${PREFIX}-*.desktop …"
+    mkdir -p "$DESKTOPDIR"
     mapfile -t desktop_files < <(find "$DESKTOPDIR" -maxdepth 1 -type f -name "${PREFIX}-*.desktop" -printf "%f\n" | sort)
 
     # Build associative arrays for quick lookup (short base names)
@@ -132,7 +152,7 @@ list_status() {
     echo "=== AppImages with a matching .desktop entry ==="
     for a in "${appimages[@]}"; do
         full_base="${a%.*}"
-        short_base="${full_base%%-*}"
+        short_base="${full_base%%[-_]*}"
         if [[ ${has_desktop[$short_base]+_} ]]; then
             echo "  ✔ $a"
         fi
@@ -142,7 +162,7 @@ list_status() {
     echo "=== AppImages missing a .desktop entry ==="
     for a in "${appimages[@]}"; do
         full_base="${a%.*}"
-        short_base="${full_base%%-*}"
+        short_base="${full_base%%[-_]*}"
         if [[ ! ${has_desktop[$short_base]+_} ]]; then
             echo "  ✘ $a"
         fi
@@ -183,15 +203,14 @@ if [[ $# -eq 0 ]]; then
 fi
 
 CREATE_DESKTOP=false
-INSTALL_LIBFUSE2=false
 LIST_ONLY=false
 REMOVE_NAME=""
 SHOW_NAME=""
 SHOW_DESKTOP=false
+APPARGS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -i|--install-libfuse2) INSTALL_LIBFUSE2=true; shift ;;
         -c|--create-desktop)   CREATE_DESKTOP=true; shift ;;
         -l|--list)              LIST_ONLY=true; shift ;;
         -s|--show-desktop)    SHOW_DESKTOP=true; SHOW_NAME="$2"; shift 2 ;;
@@ -201,15 +220,13 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Check libfuse before any operations
+check_libfuse
+
 # 1. Show desktop entry if requested
 if $SHOW_DESKTOP; then
     show_desktop_entry "$SHOW_NAME"
     exit 0
-fi
-
-# 1. Install libfuse2 if requested
-if $INSTALL_LIBFUSE2; then
-    install_libfuse2
 fi
 
 # 2. List mode (no other actions)
@@ -225,6 +242,8 @@ if [[ -n "$REMOVE_NAME" ]]; then
 fi
 
 # 4. Process supplied AppImages (or all in $APPDIR if none given)
+mkdir -p "$APPDIR"
+
 if [[ ${#APPARGS[@]} -eq 0 ]]; then
     # No explicit arguments – act on every *.AppImage in $APPDIR
     mapfile -t targets < <(find "$APPDIR" -maxdepth 1 -type f -iname "*.AppImage")
@@ -233,7 +252,7 @@ else
     resolved=()
     for arg in "${APPARGS[@]}"; do
         if [[ "$arg" == */* ]] || [[ "$arg" == *.AppImage ]]; then
-            # Assume it's a path or glob; expand via printf (keeps as is)
+            # Assume it's a path or glob
             resolved+=("$arg")
         else
             # Treat as basename: find files starting with this name
@@ -241,17 +260,28 @@ else
             if [[ ${#matches[@]} -gt 0 ]]; then
                 resolved+=("${matches[@]}")
             else
-                echo "⚠ No AppImage found for basename '$arg'"
+                echo "⚠ No AppImage found for basename '$arg' in $APPDIR"
             fi
         fi
     done
-    # Expand possible globs now (e.g. ~/apps/*.AppImage) and collect into targets
-    mapfile -t targets < <(printf "%s\n" "${resolved[@]}")
+    # Collect targets (expansion of resolved paths/globs)
+    targets=()
+    for r in "${resolved[@]}"; do
+        # Use a subshell to expand globs safely
+        while IFS= read -r -d '' file; do
+            targets+=("$file")
+        done < <(find $(dirname "$r") -maxdepth 1 -type f -name "$(basename "$r")" -print0 2>/dev/null || true)
+    done
 fi
 
 if [[ ${#targets[@]} -eq 0 ]]; then
-    echo "⚠ No AppImage files found to process."
-    exit 1
+    if [[ ${#APPARGS[@]} -gt 0 ]]; then
+        echo "⚠ No AppImage files found for the given arguments."
+        exit 1
+    else
+        echo "⚠ No AppImage files found in $APPDIR."
+        exit 1
+    fi
 fi
 
 # Ensure desktop directory exists
