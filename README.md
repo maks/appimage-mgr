@@ -4,30 +4,27 @@ A bash script to automate AppImage setup on Ubuntu/Debian-based systems.
 
 ## Features
 
-- Install libfuse2 dependency (required for AppImage runtime)
+- check for libfuse2 being installed
 - Make AppImages executable
 - Create .desktop files for application integration
 - List AppImages and show which have desktop entries
 - Show desktop entry contents
 - Copy icons from AppImage files to system icon directory
+- Remove desktop entries
 
 ## Requirements
 
 - Fedora 43 or Ubuntu 24.04
-- sudo privileges for libfuse2 installation
 
 ## Installation
 
-No installation required. Just download the script and make it executable:
+No installation required
 
-```bash
-chmod +x appimage-setup.sh
-```
 
 ## Usage
 
 ```bash
-./appimage-setup.sh [options] [AppImage ...]
+./appimage-setup [options] [AppImage ...]
 ```
 
 ### Options
@@ -43,9 +40,6 @@ chmod +x appimage-setup.sh
 ### Examples
 
 ```bash
-# Install libfuse2 and create desktop entries for all AppImages
-./appimage-setup.sh -i -c ~/apps/*.AppImage
-
 # List all AppImages and their desktop entry status
 ./appimage-setup.sh -l
 
@@ -64,3 +58,9 @@ The following directories can be configured in the script (lines 36-39):
 
 Desktop entries are named like `appimage-{short-name}.desktop` where `{short-name}` is extracted from the AppImage filename.
 
+----
+
+## Dev Notes
+
+Dart port created from original shell script by Gemini cli (Gemini 3)
+Go port created from original shell script by Opencode cli (Qwen3.5-35B-A3B-GGUF, 8KXL)
